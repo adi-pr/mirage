@@ -11,67 +11,15 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+
+	"github.com/adi-pr/mirage/internal/event"
+	"github.com/adi-pr/mirage/internal/session"
 )
 
-type Direction uint8
-
 const (
-	DirectionUnknown  Direction = iota
-	DirectionInbound            // remote -> local
-	DirectionOutbound           // local -> remote
-	DirectionLocal              // local -> local
-	DirectionTransit            // remote -> remote (bridged/gateway traffic)
-)
-
-func (d Direction) String() string {
-	switch d {
-	case DirectionInbound:
-		return "inbound"
-	case DirectionOutbound:
-		return "outbound"
-	case DirectionLocal:
-		return "local"
-	case DirectionTransit:
-		return "transit"
-	default:
-		return "unknown"
-	}
-}
-
-type NetworkEvent struct {
-	Timestamp  time.Time
-	SourceIP   netip.Addr
-	SourcePort uint16
-	DestIP     netip.Addr
-	DestPort   uint16
-	Protocol   string
-	TCPFlags   uint8
-	Direction  Direction
-}
-
-// RemoteAddr returns the address of the remote host for this event.
-// It returns an invalid netip.Addr{} when there is no single remote side.
-func (e NetworkEvent) RemoteAddr() netip.Addr {
-
-	switch e.Direction {
-	case DirectionInbound:
-		return e.SourceIP
-	case DirectionOutbound:
-		return e.DestIP
-	}
-
-	return netip.Addr{}
-}
-
-const (
-	FlagFIN uint8 = 1 << 0
-	FlagSYN uint8 = 1 << 1
-	FlagRST uint8 = 1 << 2
-	FlagPSH uint8 = 1 << 3
-	FlagACK uint8 = 1 << 4
-	FlagURG uint8 = 1 << 5
-	FlagECE uint8 = 1 << 6
-	FlagCWR uint8 = 1 << 7
+	sessionTimeout = 5 * time.Minute  // close a session after this long without events
+	sweepInterval  = 10 * time.Second // how often to check for idle sessions
+	maxSessions    = 10000            // cap on concurrent sessions
 )
 
 // localAddrs returns the set of IP addresses assigned to the named interface.
@@ -103,80 +51,59 @@ func localAddrs(device string) (map[netip.Addr]struct{}, error) {
 	return locals, nil
 }
 
-// classifyDirection decides which way a connection goes relative to this host.
-func classifyDirection(src, dst netip.Addr, locals map[netip.Addr]struct{}) Direction {
-
-	_, srcLocal := locals[src]
-	_, dstLocal := locals[dst]
-
-	switch {
-	case !srcLocal && dstLocal:
-		return DirectionInbound
-	case srcLocal && !dstLocal:
-		return DirectionOutbound
-	case srcLocal && dstLocal:
-		return DirectionLocal
-	case !srcLocal && !dstLocal:
-		return DirectionTransit
-
-	}
-
-	return DirectionUnknown
-}
-
 // decodePacket turns a raw packet into a NetworkEvent.
 // It returns false if the packet lacks a usable IP or TCP layer.
-func decodePacket(packet gopacket.Packet) (NetworkEvent, bool) {
+func decodePacket(packet gopacket.Packet) (event.NetworkEvent, bool) {
 	netLayer := packet.NetworkLayer()
 	if netLayer == nil {
-		return NetworkEvent{}, false
+		return event.NetworkEvent{}, false
 	}
 
 	srcEndpoint, dstEndpoint := netLayer.NetworkFlow().Endpoints()
 	srcIP, ok := netip.AddrFromSlice(srcEndpoint.Raw())
 	if !ok {
-		return NetworkEvent{}, false
+		return event.NetworkEvent{}, false
 	}
 
 	dstIP, ok := netip.AddrFromSlice(dstEndpoint.Raw())
 	if !ok {
-		return NetworkEvent{}, false
+		return event.NetworkEvent{}, false
 	}
 
 	tcpLayer := packet.Layer(layers.LayerTypeTCP)
 	if tcpLayer == nil {
-		return NetworkEvent{}, false
+		return event.NetworkEvent{}, false
 	}
 	tcp := tcpLayer.(*layers.TCP)
 
 	var flags uint8
 
 	if tcp.FIN {
-		flags |= FlagFIN
+		flags |= event.FlagFIN
 	}
 	if tcp.SYN {
-		flags |= FlagSYN
+		flags |= event.FlagSYN
 	}
 	if tcp.RST {
-		flags |= FlagRST
+		flags |= event.FlagRST
 	}
 	if tcp.PSH {
-		flags |= FlagPSH
+		flags |= event.FlagPSH
 	}
 	if tcp.ACK {
-		flags |= FlagACK
+		flags |= event.FlagACK
 	}
 	if tcp.URG {
-		flags |= FlagURG
+		flags |= event.FlagURG
 	}
 	if tcp.ECE {
-		flags |= FlagECE
+		flags |= event.FlagECE
 	}
 	if tcp.CWR {
-		flags |= FlagCWR
+		flags |= event.FlagCWR
 	}
 
-	return NetworkEvent{
+	return event.NetworkEvent{
 		Timestamp:  packet.Metadata().Timestamp,
 		SourceIP:   srcIP.Unmap(),
 		SourcePort: uint16(tcp.SrcPort),
@@ -189,22 +116,22 @@ func decodePacket(packet gopacket.Packet) (NetworkEvent, bool) {
 
 // capture reads packets, decodes them, and sends events on the channel.
 // It closes the channel when the packet source ends.
-func capture(source *gopacket.PacketSource, locals map[netip.Addr]struct{}, events chan<- NetworkEvent) {
+func capture(source *gopacket.PacketSource, locals map[netip.Addr]struct{}, events chan<- event.NetworkEvent) {
 	defer close(events)
 
 	var captured, skipped, dropped int
 
 	for packet := range source.Packets() {
-		event, ok := decodePacket(packet)
+		ev, ok := decodePacket(packet)
 		if !ok {
 			skipped++
 			continue
 		}
 
-		event.Direction = classifyDirection(event.SourceIP, event.DestIP, locals)
+		ev.Direction = event.ClassifyDirection(ev.SourceIP, ev.DestIP, locals)
 
 		select {
-		case events <- event:
+		case events <- ev:
 			captured++
 		default:
 			// channel buffer is full: consumer is too slow
@@ -219,21 +146,68 @@ func capture(source *gopacket.PacketSource, locals map[netip.Addr]struct{}, even
 	)
 }
 
-// consume receives events and logs them. It returns when the channel is closed.
-func consume(events <-chan NetworkEvent) {
-	for event := range events {
-		slog.Info("connection_event",
-			"timestamp", event.Timestamp,
-			"source_ip", event.SourceIP,
-			"source_port", event.SourcePort,
-			"dest_ip", event.DestIP,
-			"dest_port", event.DestPort,
-			"protocol", event.Protocol,
-			"tcp_flags", event.TCPFlags,
-			"direction", event.Direction,
-			"remote_ip", event.RemoteAddr(),
-		)
+// runSessions owns the session manager. It logs every event, feeds inbound
+// events into sessions, and expires idle sessions on a timer.
+// It returns when the events channel is closed.
+func runSessions(events <-chan event.NetworkEvent, manager *session.Manager) {
+	ticker := time.NewTicker(sweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				closed := manager.CloseAll()
+				for _, s := range closed {
+					logSessionClosed(s)
+				}
+
+				slog.Info("sessions_rejected:", "count", manager.Rejected())
+				return
+			}
+
+			logEvent(ev)
+
+			res, id := manager.Observe(ev)
+			if res == session.Created {
+				slog.Info("session_opened",
+					"session_id", id,
+					"remote_addr", ev.RemoteAddr(),
+				)
+			}
+
+		case now := <-ticker.C:
+			expSessions := manager.Expire(now)
+			for _, s := range expSessions {
+				logSessionClosed(s)
+			}
+		}
 	}
+}
+
+func logEvent(ev event.NetworkEvent) {
+	slog.Info("connection_event",
+		"timestamp", ev.Timestamp,
+		"source_ip", ev.SourceIP,
+		"source_port", ev.SourcePort,
+		"dest_ip", ev.DestIP,
+		"dest_port", ev.DestPort,
+		"protocol", ev.Protocol,
+		"tcp_flags", ev.TCPFlags,
+		"direction", ev.Direction,
+		"remote_ip", ev.RemoteAddr(),
+	)
+}
+
+func logSessionClosed(s session.Session) {
+	slog.Info("session_closed",
+		"session_id", s.ID,
+		"remote_ip", s.RemoteAddr,
+		"first_seen", s.FirstSeen,
+		"duration", s.Duration(),
+		"events", s.EventCount,
+		"distinct_ports", len(s.Ports),
+	)
 }
 
 func main() {
@@ -279,11 +253,13 @@ func main() {
 	slog.Info("local_addresses", "addresses", locals)
 
 	source := gopacket.NewPacketSource(handle, handle.LinkType())
-	events := make(chan NetworkEvent, 4096)
+	events := make(chan event.NetworkEvent, 4096)
+
+	manager := session.NewManager(sessionTimeout, maxSessions)
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		consume(events)
+		runSessions(events, manager)
 	})
 
 	capture(source, locals, events) // runs on the main goroutine; closes events when done
