@@ -30,7 +30,7 @@ func ValidateListenAddr(addr string) error {
 
 	parse, err := netip.ParseAddr(host)
 	if err != nil {
-		return fmt.Errorf("listen address '%q' must use an IP such as 127.0.0.1", addr)
+		return fmt.Errorf("listen address %q must use an IP such as 127.0.0.1", addr)
 	}
 	if loopback := parse.IsLoopback(); !loopback {
 		return fmt.Errorf("not a loopback address %q", addr)
