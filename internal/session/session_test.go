@@ -109,13 +109,23 @@ func TestExpire(t *testing.T) {
 
 	expSessions := m.Expire(t0.Add(time.Minute))
 
+	if got := len(expSessions); got != 0 {
+		t.Errorf("got %d expired sessions, want 0", got)
+	}
+	if got := len(m.Snapshot()); got != 1 {
+		t.Errorf("got %d sessions, want 1", got)
+	}
+
+	expSessions = m.Expire(t0.Add(time.Minute + time.Second))
+
 	if got := len(expSessions); got != 1 {
-		t.Errorf("got %d expired session, want 1", got)
+		t.Fatalf("got %d expired sessions, want 1", got)
 	}
 	if got := len(m.Snapshot()); got != 0 {
-		t.Errorf("got %d session, want 0", got)
+		t.Errorf("got %d sessions, want 0", got)
 	}
 }
+
 
 // 6. The same host after expiry -> Created again, with a different ID.
 func TestNewSessionAfterExpiry(t *testing.T) {
@@ -125,7 +135,7 @@ func TestNewSessionAfterExpiry(t *testing.T) {
 
 	expired := m.Expire(t0.Add(2 * time.Minute))
 	if len(expired) != 1 {
-		t.Errorf("Expire() returned %d sessions, want 1", len(expired))
+		t.Fatalf("Expire() returned %d sessions, want 1", len(expired))
 	}
 	if expired[0].ID != oldID {
 		t.Errorf("expired session ID = %d, want %d", expired[0].ID, oldID)
