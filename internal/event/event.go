@@ -31,6 +31,10 @@ func (d Direction) String() string {
 	}
 }
 
+func (d Direction) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
 type NetworkEvent struct {
 	Timestamp  time.Time
 	SourceIP   netip.Addr
