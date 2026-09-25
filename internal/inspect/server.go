@@ -30,7 +30,7 @@ func ValidateListenAddr(addr string) error {
 
 	parse, err := netip.ParseAddr(host)
 	if err != nil {
-		return fmt.Errorf("example address usage: 127.0.0.1: %w", err)
+		return fmt.Errorf("listen address '%q' must use an IP such as 127.0.0.1", addr)
 	}
 	if loopback := parse.IsLoopback(); !loopback {
 		return fmt.Errorf("not a loopback address %q", addr)
@@ -50,7 +50,6 @@ func Start(addr string) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 
-	var ln net.Listener
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
