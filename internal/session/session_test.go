@@ -87,6 +87,9 @@ func TestObserveCountsRepeatedPort(t *testing.T) {
 
 	snap := m.Snapshot()
 
+	if len(snap) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(snap))
+	}
 	if got := len(snap[0].Ports); got != 1 {
 		t.Errorf("got %d distinct ports, want 1", got)
 	}
@@ -104,7 +107,7 @@ func TestExpire(t *testing.T) {
 
 	m.Observe(inbound("203.0.113.5", 8000, t0))
 
-	expSessions := m.Expire(t0.Add(2 * time.Minute))
+	expSessions := m.Expire(t0.Add(time.Minute))
 
 	if got := len(expSessions); got != 1 {
 		t.Errorf("got %d expired session, want 1", got)
@@ -128,8 +131,10 @@ func TestNewSessionAfterExpiry(t *testing.T) {
 		t.Errorf("expired session ID = %d, want %d", expired[0].ID, oldID)
 	}
 
-	_, newID := m.Observe(inbound("203.0.113.5", 8000, t0))
-
+	newRes, newID := m.Observe(inbound("203.0.113.5", 8000, t0))
+	if newRes != Created {
+		t.Errorf("second Observe() = %d, want Created", newRes)
+	}
 	if newID == oldID {
 		t.Errorf("new session reused expired ID %d", newID)
 	}
@@ -148,6 +153,10 @@ func TestSessionCap(t *testing.T) {
 	)
 	if hostBRes != Rejected {
 		t.Errorf("Observe(hostB) = %d, want Rejected", hostBRes)
+	}
+
+	if got := m.Rejected(); got != 1 {
+		t.Errorf("Rejected() = %d, want 1", got)
 	}
 
 	hostAUpRes, hostAUpID := m.Observe(
@@ -187,4 +196,3 @@ func TestSnapshotIsCopy(t *testing.T) {
 		t.Errorf("port 9999 was added to manager through Snapshot()")
 	}
 }
-
