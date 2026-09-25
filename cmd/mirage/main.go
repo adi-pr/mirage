@@ -162,7 +162,7 @@ func runSessions(events <-chan event.NetworkEvent, manager *session.Manager) {
 					logSessionClosed(s)
 				}
 
-				slog.Info("sessions_rejected:", "count", manager.Rejected())
+				slog.Info("sessions_rejected", "count", manager.Rejected())
 				return
 			}
 
@@ -172,7 +172,7 @@ func runSessions(events <-chan event.NetworkEvent, manager *session.Manager) {
 			if res == session.Created {
 				slog.Info("session_opened",
 					"session_id", id,
-					"remote_addr", ev.RemoteAddr(),
+					"remote_ip", ev.RemoteAddr(),
 				)
 			}
 
