@@ -2,6 +2,7 @@
 package session
 
 import (
+	"cmp"
 	"maps"
 	"net/netip"
 	"slices"
@@ -120,6 +121,7 @@ func (m *Manager) Expire(now time.Time) []Session {
 			delete(m.sessions, remote)
 		}
 	}
+	sortByID(closed)
 	return closed
 }
 
@@ -132,6 +134,7 @@ func (m *Manager) CloseAll() []Session {
 
 	m.sessions = make(map[netip.Addr]*Session)
 
+	sortByID(closed)
 	return closed
 }
 
@@ -141,7 +144,16 @@ func (m *Manager) Snapshot() []Session {
 	for _, s := range m.sessions {
 		out = append(out, s.clone())
 	}
+	sortByID(out)
 	return out
+}
+
+// sortByID puts sessions in creation order. Map iteration order is random,
+// so without this the output order would change from run to run.
+func sortByID(sessions []Session) {
+	slices.SortFunc(sessions, func(a, b Session) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 }
 
 // Rejected returns how many new sessions were refused because of the cap.

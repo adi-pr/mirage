@@ -126,7 +126,6 @@ func TestExpire(t *testing.T) {
 	}
 }
 
-
 // 6. The same host after expiry -> Created again, with a different ID.
 func TestNewSessionAfterExpiry(t *testing.T) {
 	m := NewManager(time.Minute, 100)
@@ -204,5 +203,38 @@ func TestSnapshotIsCopy(t *testing.T) {
 
 	if _, ok := snap2[0].Ports[9999]; ok {
 		t.Errorf("port 9999 was added to manager through Snapshot()")
+	}
+}
+
+// 9. CloseAll, Expire and Snapshot return sessions in ID order, every time.
+func TestSessionsSortedByID(t *testing.T) {
+	hosts := []string{"203.0.113.1", "203.0.113.2", "203.0.113.3", "203.0.113.4", "203.0.113.5"}
+
+	// Map order is random, so repeat to make an unsorted result show up.
+	for range 20 {
+		m := NewManager(time.Minute, 100)
+		for _, h := range hosts {
+			m.Observe(inbound(h, 80, t0))
+		}
+
+		checkOrder(t, "Snapshot", m.Snapshot(), len(hosts))
+		checkOrder(t, "Expire", m.Expire(t0.Add(2*time.Minute)), len(hosts))
+
+		for _, h := range hosts {
+			m.Observe(inbound(h, 80, t0))
+		}
+		checkOrder(t, "CloseAll", m.CloseAll(), len(hosts))
+	}
+}
+
+func checkOrder(t *testing.T, name string, got []Session, want int) {
+	t.Helper()
+	if len(got) != want {
+		t.Fatalf("%s returned %d sessions, want %d", name, len(got), want)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].ID >= got[i].ID {
+			t.Fatalf("%s not sorted by ID: %d before %d", name, got[i-1].ID, got[i].ID)
+		}
 	}
 }
