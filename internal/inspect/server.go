@@ -74,7 +74,7 @@ func (s *Server) serve() {
 	defer close(s.done)
 
 	err := s.srv.Serve(s.listener)
-	
+
 	if shutdown := errors.Is(err, http.ErrServerClosed); !shutdown {
 		slog.Error("serve_error", "err", err)
 	}
