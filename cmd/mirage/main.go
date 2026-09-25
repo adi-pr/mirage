@@ -22,6 +22,7 @@ import (
 	"github.com/google/gopacket/pcap"
 
 	"github.com/adi-pr/mirage/internal/event"
+	"github.com/adi-pr/mirage/internal/inspect"
 	"github.com/adi-pr/mirage/internal/session"
 )
 
@@ -29,6 +30,7 @@ const (
 	sweepInterval  = 10 * time.Second       // how often to check for idle sessions
 	maxSessions    = 10000                  // cap on concurrent sessions
 	snapshotLength = 1600                   // bytes captured per packet
+	shutdownGrace  = 3 * time.Second        // how long in-flight API requests get on shutdown
 	readTimeout    = 500 * time.Millisecond // live capture wakes up at least this often
 	// bpfFilter only narrows to TCP: libpcap's tcp[tcpflags] syntax does not
 	// work for IPv6, so the SYN-only check happens in capture instead.
@@ -42,6 +44,7 @@ type config struct {
 	outPath        string        // -o: telemetry output file (JSON lines)
 	localIPs       string        // -local: comma-separated local addresses (required with -r)
 	sessionTimeout time.Duration // -timeout: close a session after this long idle
+	listen         string        // -listen: inspection API address (loopback only, "" disables)
 }
 
 func parseFlags() config {
@@ -51,6 +54,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.outPath, "o", "mirage.jsonl", "telemetry output file (JSON lines)")
 	flag.StringVar(&cfg.localIPs, "local", "", "comma-separated local IP addresses (default: the interface's addresses)")
 	flag.DurationVar(&cfg.sessionTimeout, "timeout", 5*time.Minute, "close a session after this long without events")
+	flag.StringVar(&cfg.listen, "listen", "127.0.0.1:8787", `inspection API address, loopback only ("" disables)`)
 	flag.Parse()
 	return cfg
 }
@@ -337,6 +341,13 @@ func main() {
 func run(cfg config) error {
 	slog.Info("MIRAGE starting")
 
+	// Check the flag before opening anything, so a bad address fails fast.
+	if cfg.listen != "" {
+		if err := inspect.ValidateListenAddr(cfg.listen); err != nil {
+			return err
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -369,13 +380,32 @@ func run(cfg config) error {
 
 	manager := session.NewManager(cfg.sessionTimeout, maxSessions)
 
+	var server *inspect.Server
+	if cfg.listen != "" {
+		server, err = inspect.Start(cfg.listen)
+		if err != nil {
+			return err
+		}
+		slog.Info("inspect_listening", "addr", server.Addr())
+	}
+
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		runSessions(events, manager, tel)
 	})
 
 	stats := capture(ctx, source, locals, events) // returns on Ctrl-C or end of file; closes events
-	wg.Wait()                                     // runSessions closes all sessions, then returns
+
+	// Stop the API before the session goroutine exits: from 6.2 on, handlers
+	// ask runSessions for data, so no request may be in flight after it's gone.
+	if server != nil {
+		err := server.Shutdown(shutdownGrace)
+		if err != nil {
+			slog.Error("shutdown_error", "error", err)
+		}
+	}
+
+	wg.Wait() // runSessions closes all sessions, then returns
 
 	// Logged only after runSessions has finished, so a single goroutine writes
 	// telemetry at a time and replays produce the same line order every run.
