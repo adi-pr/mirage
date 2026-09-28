@@ -219,3 +219,9 @@ The project is primarily an exploration of **Linux networking, cyber deception, 
 MIRAGE works directly with Linux networking and needs elevated privileges for packet capture, and later for network namespaces and firewall configuration.
 
 Develop and test it in an isolated environment. Virtual machines or a dedicated lab network are strongly recommended. Do not expose experimental MIRAGE deployments directly to untrusted networks.
+
+---
+
+## AI Assistance
+
+Claude (Anthropic's AI assistant) was used to help write some of the commit messages and code comments in this project.
