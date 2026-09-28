@@ -263,9 +263,9 @@ loop:
 }
 
 // runSessions owns the session manager. It logs every event, feeds inbound
-// events into sessions, and expires idle sessions on a timer.
-// It returns when the events channel is closed.
-func runSessions(events <-chan event.NetworkEvent, manager *session.Manager, tel *slog.Logger) {
+// events into sessions, expires idle sessions on a timer, and answers snapshot
+// requests from other goroutines. It returns when the events channel is closed.
+func runSessions(events <-chan event.NetworkEvent, requests <-chan snapshotRequest, manager *session.Manager, tel *slog.Logger) {
 	ticker := time.NewTicker(sweepInterval)
 	defer ticker.Stop()
 
@@ -297,6 +297,9 @@ func runSessions(events <-chan event.NetworkEvent, manager *session.Manager, tel
 			for _, s := range expSessions {
 				logSessionClosed(tel, s)
 			}
+
+		case reply := <-requests:
+			reply <- manager.Snapshot()
 		}
 	}
 }
@@ -389,15 +392,20 @@ func run(cfg config) error {
 		slog.Info("inspect_listening", "addr", server.Addr())
 	}
 
+	requests := make(chan snapshotRequest)
+	sessionsDone := make(chan struct{}) // closed when runSessions returns
+
+	getSessions := snapshotFunc(requests, sessionsDone)
+	_ = getSessions // TODO: pass to the inspect server
+
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		runSessions(events, manager, tel)
+		defer close(sessionsDone)
+		runSessions(events, requests, manager, tel)
 	})
 
 	stats := capture(ctx, source, locals, events) // returns on Ctrl-C or end of file; closes events
 
-	// Stop the API before the session goroutine exits: from 6.2 on, handlers
-	// ask runSessions for data, so no request may be in flight after it's gone.
 	if server != nil {
 		err := server.Shutdown(shutdownGrace)
 		if err != nil {
