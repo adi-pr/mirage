@@ -39,12 +39,12 @@ type sessionDetail struct {
 // toSummary converts a session into its API summary.
 func toSummary(s session.Session) sessionSummary {
 	return sessionSummary{
-		ID: s.ID,
-		RemoteIP: s.RemoteAddr,
-		FirstSeen: s.FirstSeen,
-		LastSeen: s.LastSeen,
-		DurationMS: s.Duration().Milliseconds(),
-		Events: s.EventCount,		
+		ID:            s.ID,
+		RemoteIP:      s.RemoteAddr,
+		FirstSeen:     s.FirstSeen,
+		LastSeen:      s.LastSeen,
+		DurationMS:    s.Duration().Milliseconds(),
+		Events:        s.EventCount,
 		DistinctPorts: len(s.Ports),
 	}
 }

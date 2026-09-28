@@ -34,7 +34,7 @@ func TestValidateListenAddr(t *testing.T) {
 // TestHealthz starts a real server on a free port, calls /healthz, and shuts it down.
 func TestHealthz(t *testing.T) {
 	// Port 0 asks the OS for any free port, so tests never collide.
-	s, err := Start("127.0.0.1:0")
+	s, err := Start("127.0.0.1:0", noSessions)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestHealthz(t *testing.T) {
 
 // TestHealthzRejectsPost verifies that /healthz only accepts GET requests.
 func TestHealthzRejectsPost(t *testing.T) {
-	s, err := Start("127.0.0.1:0")
+	s, err := Start("127.0.0.1:0", noSessions)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestHealthzRejectsPost(t *testing.T) {
 // TestStartPortInUse verifies that starting a second server on an occupied
 // address returns an error.
 func TestStartPortInUse(t *testing.T) {
-	s, err := Start("127.0.0.1:0")
+	s, err := Start("127.0.0.1:0", noSessions)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestStartPortInUse(t *testing.T) {
 		}
 	}()
 
-	_, err = Start(s.Addr())
+	_, err = Start(s.Addr(), noSessions)
 	if err == nil {
 		t.Fatal("Start on an occupied port succeeded, want error")
 	}

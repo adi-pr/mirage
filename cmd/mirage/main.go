@@ -383,20 +383,19 @@ func run(cfg config) error {
 
 	manager := session.NewManager(cfg.sessionTimeout, maxSessions)
 
+	requests := make(chan snapshotRequest)
+	sessionsDone := make(chan struct{}) // closed when runSessions returns
+
+	getSessions := snapshotFunc(requests, sessionsDone)
+
 	var server *inspect.Server
 	if cfg.listen != "" {
-		server, err = inspect.Start(cfg.listen)
+		server, err = inspect.Start(cfg.listen, getSessions)
 		if err != nil {
 			return err
 		}
 		slog.Info("inspect_listening", "addr", server.Addr())
 	}
-
-	requests := make(chan snapshotRequest)
-	sessionsDone := make(chan struct{}) // closed when runSessions returns
-
-	getSessions := snapshotFunc(requests, sessionsDone)
-	_ = getSessions // TODO: pass to the inspect server
 
 	var wg sync.WaitGroup
 	wg.Go(func() {

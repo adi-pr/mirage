@@ -42,13 +42,13 @@ func ValidateListenAddr(addr string) error {
 // Start validates addr, binds it, and serves in a background goroutine.
 // Binding happens here rather than in the goroutine, so errors like
 // "address already in use" are returned to the caller.
-func Start(addr string) (*Server, error) {
+// getSessions is called on every /sessions request to fetch live sessions.
+func Start(addr string, getSessions SessionsFunc) (*Server, error) {
 	if err := ValidateListenAddr(addr); err != nil {
 		return nil, err
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux := newMux(getSessions)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
