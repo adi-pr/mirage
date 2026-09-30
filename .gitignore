@@ -33,3 +33,4 @@ go.work.sum
 /mirage
 *jsonl
 testdata/scan.pcap
+docs/
