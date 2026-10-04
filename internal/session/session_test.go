@@ -269,27 +269,21 @@ func TestFirstEventOfNewSessionIsInTimeline(t *testing.T) {
 	t.Skip("Not implemented")
 }
 
-// 12. Snapshot timeline does not change when manager observe more events
-func TestSnapshotTimelineDoesNotChangeWhenManagerObservesMoreEvents(t *testing.T) {
-	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
-	m.Observe(inbound("203.0.113.5", 8000, t0))
+// 12. Modifying a snapshot's timeline doesn't change the manager's.
+func TestSnapshotTimelineIsCopy(t *testing.T) {
+	m := NewManager(Config{})
+	m.Observe(inbound("203.0.113.5", 22, t0))
 
 	snap := m.Snapshot()
-	if got := len(snap); got != 1 {
-		t.Fatalf("got %d sessions, want 1", got)
+	if len(snap) != 1 || len(snap[0].Timeline) != 1 {
+		t.Errorf("got %d entries, want 1", len(snap))
 	}
 
-	timeline := snap[0].Timeline
-	for _, e := range timeline {
-		if e.Port != 8000 {
-			t.Errorf("got %d port, want %d", e.Port, 8000)
-		}
-	}
+	snap[0].Timeline[0].Port = 9999
 
-	m.Observe(inbound("203.0.113.5", 9000, t0))
-
-	if got := len(timeline); got != 1 {
-		t.Errorf("got %d timeline entries, want 1", got)
+	snap = m.Snapshot()
+	if got := snap[0].Timeline[0].Port; got != 22 {
+		t.Errorf("got %d port, want 22", got)
 	}
 }
 

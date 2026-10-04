@@ -43,6 +43,7 @@ func (s *Session) clone() Session {
 	c.Ports = maps.Clone(s.Ports)
 	c.PortOrder = slices.Clone(s.PortOrder)
 	c.LocalAddrs = maps.Clone(s.LocalAddrs)
+	c.Timeline = slices.Clone(s.Timeline)
 
 	return c
 }
