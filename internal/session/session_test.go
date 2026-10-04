@@ -29,7 +29,7 @@ func inbound(src string, port uint16, at time.Time) event.NetworkEvent {
 
 // 1. Three events from one host on different ports -> one session, three ports.
 func TestObserveGroupsByRemote(t *testing.T) {
-	m := NewManager(5*time.Minute, 100)
+	m := NewManager(Config{Timeout: 5 * time.Minute, MaxSessions: 100})
 
 	for i, port := range []uint16{22, 80, 443} {
 		m.Observe(inbound("203.0.113.5", port, t0.Add(time.Duration(i)*time.Second)))
@@ -52,7 +52,7 @@ func TestObserveGroupsByRemote(t *testing.T) {
 
 // 2. Events from two hosts -> two sessions.
 func TestObserveSeparatesHosts(t *testing.T) {
-	m := NewManager(5*time.Minute, 100)
+	m := NewManager(Config{Timeout: 5 * time.Minute, MaxSessions: 100})
 
 	m.Observe(inbound("203.0.113.5", 8000, t0.Add(time.Duration(1)*time.Second)))
 	m.Observe(inbound("243.7.134.15", 3000, t0.Add(time.Duration(2)*time.Second)))
@@ -64,7 +64,7 @@ func TestObserveSeparatesHosts(t *testing.T) {
 
 // 3. An outbound event -> Ignored, and no session exists.
 func TestObserveIgnoresOutbound(t *testing.T) {
-	m := NewManager(5*time.Minute, 100)
+	m := NewManager(Config{Timeout: 5 * time.Minute, MaxSessions: 100})
 
 	ev := inbound("203.0.113.5", 8000, t0.Add(time.Duration(1)*time.Second))
 	ev.Direction = event.DirectionOutbound
@@ -79,7 +79,7 @@ func TestObserveIgnoresOutbound(t *testing.T) {
 
 // 4. The same port twice -> hit count 2, but still one distinct port.
 func TestObserveCountsRepeatedPort(t *testing.T) {
-	m := NewManager(5*time.Minute, 100)
+	m := NewManager(Config{Timeout: 5 * time.Minute, MaxSessions: 100})
 
 	for i := 0; i < 2; i++ {
 		m.Observe(inbound("203.0.113.5", 22, t0.Add(time.Duration(i)*time.Second)))
@@ -103,7 +103,7 @@ func TestObserveCountsRepeatedPort(t *testing.T) {
 
 // 5. Expire just before the timeout keeps the session; just after returns it.
 func TestExpire(t *testing.T) {
-	m := NewManager(time.Minute, 100)
+	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
 
 	m.Observe(inbound("203.0.113.5", 8000, t0))
 
@@ -128,7 +128,7 @@ func TestExpire(t *testing.T) {
 
 // 6. The same host after expiry -> Created again, with a different ID.
 func TestNewSessionAfterExpiry(t *testing.T) {
-	m := NewManager(time.Minute, 100)
+	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
 
 	_, oldID := m.Observe(inbound("203.0.113.5", 8000, t0))
 
@@ -151,7 +151,7 @@ func TestNewSessionAfterExpiry(t *testing.T) {
 
 // 7. Cap reached -> new hosts Rejected and counted, existing sessions still Updated.
 func TestSessionCap(t *testing.T) {
-	m := NewManager(time.Minute, 1)
+	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 1})
 
 	_, hostAID := m.Observe(
 		inbound("203.0.113.5", 8000, t0.Add(1*time.Second)),
@@ -183,7 +183,7 @@ func TestSessionCap(t *testing.T) {
 
 // 8. Modifying a Snapshot result doesn't change the manager.
 func TestSnapshotIsCopy(t *testing.T) {
-	m := NewManager(time.Minute, 100)
+	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
 
 	m.Observe(inbound("203.0.113.5", 8000, t0))
 
@@ -212,7 +212,7 @@ func TestSessionsSortedByID(t *testing.T) {
 
 	// Map order is random, so repeat to make an unsorted result show up.
 	for range 20 {
-		m := NewManager(time.Minute, 100)
+		m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
 		for _, h := range hosts {
 			m.Observe(inbound(h, 80, t0))
 		}
@@ -237,4 +237,71 @@ func checkOrder(t *testing.T, name string, got []Session, want int) {
 			t.Fatalf("%s not sorted by ID: %d before %d", name, got[i-1].ID, got[i].ID)
 		}
 	}
+}
+
+// 10. Observed event appears in session timeline
+func TestObservedEventAppearsInSessionTimeline(t *testing.T) {
+	var PORT uint16 = 8000
+
+	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
+	m.Observe(inbound("203.0.113.5", PORT, t0))
+
+	snap := m.Snapshot()
+	if got := len(snap); got != 1 {
+		t.Fatalf("got %d sessions, want 1", got)
+	}
+
+	timeline := snap[0].Timeline
+
+	if got := len(timeline); got != 1 {
+		t.Fatalf("got %d timeline entries, want 1", got)
+	}
+
+	for _, e := range timeline {
+		if e.Port != PORT {
+			t.Errorf("got %d port, want %d", e.Port, PORT)
+		}
+	}
+}
+
+// 11. First event of a new session is in timeline
+func TestFirstEventOfNewSessionIsInTimeline(t *testing.T) {
+	t.Skip("Not implemented")
+}
+
+// 12. Snapshot timeline does not change when manager observe more events
+func TestSnapshotTimelineDoesNotChangeWhenManagerObservesMoreEvents(t *testing.T) {
+	m := NewManager(Config{Timeout: time.Minute, MaxSessions: 100})
+	m.Observe(inbound("203.0.113.5", 8000, t0))
+
+	snap := m.Snapshot()
+	if got := len(snap); got != 1 {
+		t.Fatalf("got %d sessions, want 1", got)
+	}
+
+	timeline := snap[0].Timeline
+	for _, e := range timeline {
+		if e.Port != 8000 {
+			t.Errorf("got %d port, want %d", e.Port, 8000)
+		}
+	}
+
+	m.Observe(inbound("203.0.113.5", 9000, t0))
+
+	if got := len(timeline); got != 1 {
+		t.Errorf("got %d timeline entries, want 1", got)
+	}
+}
+
+// 13. manager Applies Window Limit
+func TestManagerAppliesWindowLimit(t *testing.T) {
+	t.Skip("Not implemented")
+}
+
+func TestManagerUsesConfiguredTimelineWindow(t *testing.T) {
+	t.Skip("Not Implemented")
+}
+
+func TestNewManagerFillsDefaults(t *testing.T) {
+	t.Skip("Not Implemented")
 }

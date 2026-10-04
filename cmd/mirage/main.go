@@ -28,7 +28,6 @@ import (
 
 const (
 	sweepInterval  = 10 * time.Second       // how often to check for idle sessions
-	maxSessions    = 10000                  // cap on concurrent sessions
 	snapshotLength = 1600                   // bytes captured per packet
 	shutdownGrace  = 3 * time.Second        // how long in-flight API requests get on shutdown
 	readTimeout    = 500 * time.Millisecond // live capture wakes up at least this often
@@ -45,6 +44,9 @@ type config struct {
 	localIPs       string        // -local: comma-separated local addresses (required with -r)
 	sessionTimeout time.Duration // -timeout: close a session after this long idle
 	listen         string        // -listen: inspection API address (loopback only, "" disables)
+	maxSession     int           // -max-sessions amount of sessions allowed to exist
+	window         time.Duration // -window how long recent SYNs stay in a session's timeline
+	limit          int           // -limit amount of SYN events appended to the timeline
 }
 
 func parseFlags() config {
@@ -53,8 +55,11 @@ func parseFlags() config {
 	flag.StringVar(&cfg.pcapFile, "r", "", "read packets from a pcap file instead of the interface")
 	flag.StringVar(&cfg.outPath, "o", "mirage.jsonl", "telemetry output file (JSON lines)")
 	flag.StringVar(&cfg.localIPs, "local", "", "comma-separated local IP addresses (default: the interface's addresses)")
-	flag.DurationVar(&cfg.sessionTimeout, "timeout", 5*time.Minute, "close a session after this long without events")
+	flag.DurationVar(&cfg.sessionTimeout, "timeout", session.DefaultTimeout, "close a session after this long without events")
 	flag.StringVar(&cfg.listen, "listen", "127.0.0.1:8787", `inspection API address, loopback only ("" disables)`)
+	flag.IntVar(&cfg.maxSession, "max-sessions", session.DefaultMaxSessions, "maximum number of sessions allowed to exist")
+	flag.DurationVar(&cfg.window, "timeline-window", session.DefaultWindow, "capture SYN packets within this timeframe")
+	flag.IntVar(&cfg.limit, "timeline-limit", session.DefaultLimit, "maximum number of events in a session timeline")
 	flag.Parse()
 	return cfg
 }
@@ -381,7 +386,12 @@ func run(cfg config) error {
 	source := gopacket.NewPacketSource(handle, handle.LinkType())
 	events := make(chan event.NetworkEvent, 4096)
 
-	manager := session.NewManager(cfg.sessionTimeout, maxSessions)
+	manager := session.NewManager(session.Config{
+		Timeout:        cfg.sessionTimeout,
+		MaxSessions:    cfg.maxSession,
+		TimelineWindow: cfg.window,
+		TimelineLimit:  cfg.limit,
+	})
 
 	requests := make(chan snapshotRequest)
 	sessionsDone := make(chan struct{}) // closed when runSessions returns

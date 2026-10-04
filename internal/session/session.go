@@ -11,6 +11,13 @@ import (
 	"github.com/adi-pr/mirage/internal/event"
 )
 
+const (
+	DefaultTimeout     = 300 * time.Second
+	DefaultMaxSessions = 10000
+	DefaultWindow      = 60 * time.Second
+	DefaultLimit       = 256
+)
+
 // Session is everything seen from one remote host within an idle timeout.
 type Session struct {
 	ID         uint64
@@ -21,6 +28,7 @@ type Session struct {
 	Ports      map[uint16]int          // destination port -> hit count
 	PortOrder  []uint16                // distinct ports in first-touch order
 	LocalAddrs map[netip.Addr]struct{} // local addresses this host contacted
+	Timeline   Timeline                // recent SYNs within the window, oldest first
 }
 
 // Duration is the time between the first and last event of the session.
@@ -52,19 +60,44 @@ const (
 // Manager tracks active sessions. It is not safe for concurrent use:
 // a single goroutine must own it.
 type Manager struct {
-	timeout     time.Duration
-	maxSessions int
-	nextID      uint64
-	sessions    map[netip.Addr]*Session
-	rejected    int
+	timeout        time.Duration
+	maxSessions    int
+	timelineWindow time.Duration
+	timelineLimit  int
+	nextID         uint64
+	sessions       map[netip.Addr]*Session
+	rejected       int
 }
 
-func NewManager(timeout time.Duration, maxSessions int) *Manager {
+type Config struct {
+	Timeout        time.Duration
+	MaxSessions    int
+	TimelineWindow time.Duration
+	TimelineLimit  int
+}
+
+// NewManager creates a Manager. Zero-valued Config fields use their defaults.
+func NewManager(cfg Config) *Manager {
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = DefaultTimeout
+	}
+	if cfg.MaxSessions <= 0 {
+		cfg.MaxSessions = DefaultMaxSessions
+	}
+	if cfg.TimelineWindow <= 0 {
+		cfg.TimelineWindow = DefaultWindow
+	}
+	if cfg.TimelineLimit <= 0 {
+		cfg.TimelineLimit = DefaultLimit
+	}
+
 	return &Manager{
-		timeout:     timeout,
-		maxSessions: maxSessions,
-		nextID:      1,
-		sessions:    make(map[netip.Addr]*Session),
+		timeout:        cfg.Timeout,
+		maxSessions:    cfg.MaxSessions,
+		timelineWindow: cfg.TimelineWindow,
+		timelineLimit:  cfg.TimelineLimit,
+		nextID:         1,
+		sessions:       make(map[netip.Addr]*Session),
 	}
 }
 
@@ -101,6 +134,13 @@ func (m *Manager) Observe(ev event.NetworkEvent) (ObserveResult, uint64) {
 	if s.Ports[ev.DestPort] == 0 {
 		s.PortOrder = append(s.PortOrder, ev.DestPort)
 	}
+
+	// out-of-order events are skipped by the timeline but are still counted in the EventCount/Ports
+	s.Timeline.Add(
+		Entry{Port: ev.DestPort, Time: ev.Timestamp},
+		m.timelineWindow,
+		m.timelineLimit,
+	)
 
 	s.Ports[ev.DestPort]++
 	s.LocalAddrs[ev.DestIP] = struct{}{}
