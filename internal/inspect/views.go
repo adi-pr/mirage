@@ -27,13 +27,20 @@ type portHits struct {
 	Hits int    `json:"hits"`
 }
 
+// timelineEntry is one SYN in a session's timeline.
+type timelineEntry struct {
+	Time time.Time `json:"time"`
+	Port uint16    `json:"port"`
+}
+
 // sessionDetail is the body of GET /sessions/{ip}. Embedding sessionSummary
 // puts its fields at the top level of the JSON object, next to the extra ones.
 type sessionDetail struct {
 	sessionSummary
-	Ports      []portHits   `json:"ports"`       // sorted by port number
-	PortOrder  []uint16     `json:"port_order"`  // first-touch order, as recorded
-	LocalAddrs []netip.Addr `json:"local_addrs"` // sorted
+	Ports      []portHits      `json:"ports"`       // sorted by port number
+	PortOrder  []uint16        `json:"port_order"`  // first-touch order, as recorded
+	LocalAddrs []netip.Addr    `json:"local_addrs"` // sorted
+	Timeline   []timelineEntry `json:"timeline"`
 }
 
 // toSummary converts a session into its API summary.
@@ -54,6 +61,7 @@ func toDetail(s session.Session) sessionDetail {
 	d := sessionDetail{
 		sessionSummary: toSummary(s),
 		PortOrder:      s.PortOrder,
+		Timeline:       make([]timelineEntry, 0, len(s.Timeline)),
 	}
 
 	d.Ports = make([]portHits, 0, len(s.Ports))
@@ -72,6 +80,13 @@ func toDetail(s session.Session) sessionDetail {
 	slices.SortFunc(d.LocalAddrs, func(a, b netip.Addr) int {
 		return a.Compare(b)
 	})
+
+	for _, e := range s.Timeline {
+		d.Timeline = append(d.Timeline, timelineEntry{
+			Time: e.Time,
+			Port: e.Port,
+		})
+	}
 
 	return d
 }
