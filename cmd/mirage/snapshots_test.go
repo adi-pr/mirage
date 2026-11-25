@@ -47,16 +47,29 @@ func TestSnapshotAnswered(t *testing.T) {
 
 // 2. Nobody answers and the context times out -> context.DeadlineExceeded, no hang.
 func TestSnapshotContextTimeout(t *testing.T) {
-	t.Skip("TODO: make requests and done, but start no owner goroutine. " +
-		"Call get with context.WithTimeout(..., 50*time.Millisecond) and check " +
-		"errors.Is(err, context.DeadlineExceeded)")
+	requests := make(chan snapshotRequest)
+	done := make(chan struct{})
+
+	get := snapshotFunc(requests, done)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	if _, err := get(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded", err)
+	}
 }
 
 // 3. runSessions has already exited (done is closed) -> errSessionsStopped right away.
 func TestSnapshotOwnerStopped(t *testing.T) {
-	t.Skip("TODO: close(done) before calling get. Use context.Background() so only " +
-		"done can end the wait, and check errors.Is(err, errSessionsStopped)")
-}
+	requests := make(chan snapshotRequest)
+	done := make(chan struct{})
+	close(done)
 
-// Keeps the errors import used until the tests above are written. Delete it then.
-var _ = errors.Is
+	get := snapshotFunc(requests, done)
+
+	// Background never ends, so only done can end the wait.
+	if _, err := get(context.Background()); !errors.Is(err, errSessionsStopped) {
+		t.Errorf("err = %v, want errSessionsStopped", err)
+	}
+}
