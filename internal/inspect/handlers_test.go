@@ -3,9 +3,11 @@ package inspect
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -84,29 +86,87 @@ func TestListSessions(t *testing.T) {
 
 // 2. No sessions -> 200 with an empty JSON list "[]", not "null".
 func TestListSessionsEmpty(t *testing.T) {
-	t.Skip("TODO: get(t, noSessions, \"/sessions\"); check the status is 200 and " +
-		"rec.Body.String() is \"[]\\n\" (the encoder adds a newline)")
+	rec := get(t, noSessions, "/sessions")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if got, want := rec.Body.String(), "[]\n"; got != want {
+		t.Errorf("body = %q, want %q", got, want)
+	}
 }
 
 // 3. getSessions fails -> 503.
 func TestListSessionsUnavailable(t *testing.T) {
-	t.Skip("TODO: write a SessionsFunc that returns an error (errors.New), " +
-		"call /sessions with it, and check for http.StatusServiceUnavailable")
+	failing := func(ctx context.Context) ([]session.Session, error) {
+		return nil, errors.New("no sessions for you")
+	}
+
+	rec := get(t, failing, "/sessions")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503; body: %s", rec.Code, rec.Body)
+	}
 }
 
-// 4. GET /sessions/{ip} returns the full session, with ports sorted by number.
+// 4. GET /sessions/{ip} returns the full session, with ports sorted by number
+// and the timeline in recorded order.
 func TestGetSession(t *testing.T) {
-	t.Skip("TODO: get(t, fixedSessions(scanner()), \"/sessions/203.0.113.5\"); " +
-		"decode into sessionDetail; check Ports is [{22 1} {80 1} {443 2}] and " +
-		"PortOrder is still [443 22 80]")
+	s := scanner()
+	s.Timeline = session.Timeline{
+		{Time: t0, Port: 443},
+		{Time: t0.Add(500 * time.Millisecond), Port: 22},
+		{Time: t0.Add(time.Second), Port: 80},
+		{Time: t0.Add(1500 * time.Millisecond), Port: 443},
+	}
+
+	rec := get(t, fixedSessions(s), "/sessions/203.0.113.5")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var got sessionDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body: %s", err, rec.Body)
+	}
+	if got.ID != 1 || got.RemoteIP != s.RemoteAddr {
+		t.Errorf("got ID %d from %s, want ID 1 from %s", got.ID, got.RemoteIP, s.RemoteAddr)
+	}
+	if want := []portHits{{22, 1}, {80, 1}, {443, 2}}; !slices.Equal(got.Ports, want) {
+		t.Errorf("ports = %v, want %v", got.Ports, want)
+	}
+	if want := []uint16{443, 22, 80}; !slices.Equal(got.PortOrder, want) {
+		t.Errorf("port_order = %v, want %v", got.PortOrder, want)
+	}
+	if want := []netip.Addr{netip.MustParseAddr("192.168.1.10")}; !slices.Equal(got.LocalAddrs, want) {
+		t.Errorf("local_addrs = %v, want %v", got.LocalAddrs, want)
+	}
+
+	if len(got.Timeline) != len(s.Timeline) {
+		t.Fatalf("got %d timeline entries, want %d", len(got.Timeline), len(s.Timeline))
+	}
+	for i, want := range s.Timeline {
+		if e := got.Timeline[i]; !e.Time.Equal(want.Time) || e.Port != want.Port {
+			t.Errorf("timeline[%d] = %v, want %v", i, e, want)
+		}
+	}
 }
 
 // 5. Unknown IP -> 404.
 func TestGetSessionNotFound(t *testing.T) {
-	t.Skip("TODO: ask for /sessions/198.51.100.99 with fixedSessions(scanner())")
+	rec := get(t, fixedSessions(scanner()), "/sessions/198.51.100.99")
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body)
+	}
 }
 
 // 6. Not an IP -> 400.
 func TestGetSessionBadIP(t *testing.T) {
-	t.Skip("TODO: ask for /sessions/not-an-ip")
+	rec := get(t, fixedSessions(scanner()), "/sessions/not-an-ip")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+	}
 }

@@ -37,16 +37,20 @@ type Result struct {
 	Detail string // human-readable reason, e.g. "42 distinct ports in 60s"
 }
 
-// PortBreadth (R1) counts distinct destination ports among timeline entries.
-// Points are the count minus the baseline, (now − window, now]
+// inWindow reports whether t is in (now − window, now]. Entries later than now
+// are excluded, so an out-of-order event is never scored with later evidence.
+func inWindow(t, now time.Time, window time.Duration) bool {
+	return t.After(now.Add(-window)) && !t.After(now)
+}
+
+// PortBreadth (R1) counts distinct destination ports among timeline entries
+// in (now − window, now]. Points are the count minus the baseline,
 // at least 0 and at most the max.
 func PortBreadth(timeline session.Timeline, now time.Time, cfg Config) Result {
-	cutoff := now.Add(-cfg.PortBreadthWindow)
-
 	distinctPorts := make(map[uint16]struct{})
 
 	for _, e := range timeline {
-		if !e.Time.After(cutoff) {
+		if !inWindow(e.Time, now, cfg.PortBreadthWindow) {
 			continue
 		}
 
@@ -64,15 +68,14 @@ func PortBreadth(timeline session.Timeline, now time.Time, cfg Config) Result {
 	}
 }
 
-// ConnectionRate (R2) checks SYNs in the window, ending at the current event
-// Points are the SYNs in the window minus the baseline,
+// ConnectionRate (R2) counts SYNs among timeline entries in (now − window, now].
+// Points are the count minus the baseline,
 // at least 0 and at most the max.
 func ConnectionRate(timeline session.Timeline, now time.Time, cfg Config) Result {
-	cutoff := now.Add(-cfg.ConnectionRateWindow)
 	count := 0
 
 	for _, e := range timeline {
-		if !e.Time.After(cutoff) {
+		if !inWindow(e.Time, now, cfg.ConnectionRateWindow) {
 			continue
 		}
 		count++
@@ -83,6 +86,6 @@ func ConnectionRate(timeline session.Timeline, now time.Time, cfg Config) Result
 	return Result{
 		Rule:   "connection_rate",
 		Points: points,
-		Detail: fmt.Sprintf("%d SYNs in %d", count, cfg.ConnectionRateWindow),
+		Detail: fmt.Sprintf("%d SYNs in %s", count, cfg.ConnectionRateWindow),
 	}
 }

@@ -2,6 +2,7 @@ package session
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -266,7 +267,19 @@ func TestObservedEventAppearsInSessionTimeline(t *testing.T) {
 
 // 11. First event of a new session is in timeline
 func TestFirstEventOfNewSessionIsInTimeline(t *testing.T) {
-	t.Skip("Not implemented")
+	m := NewManager(Config{})
+
+	if res, _ := m.Observe(inbound("203.0.113.5", 22, t0)); res != Created {
+		t.Fatalf("Observe = %v, want Created", res)
+	}
+
+	timeline := m.Snapshot()[0].Timeline
+	if len(timeline) != 1 {
+		t.Fatalf("got %d timeline entries, want 1", len(timeline))
+	}
+	if e := timeline[0]; !e.Time.Equal(t0) || e.Port != 22 {
+		t.Errorf("entry = %v, want port 22 at %v", e, t0)
+	}
 }
 
 // 12. Modifying a snapshot's timeline doesn't change the manager's.
@@ -287,15 +300,59 @@ func TestSnapshotTimelineIsCopy(t *testing.T) {
 	}
 }
 
-// 13. manager Applies Window Limit
+// timelinePorts returns the ports in the only session's timeline, oldest first.
+func timelinePorts(t *testing.T, m *Manager) []uint16 {
+	t.Helper()
+	snap := m.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(snap))
+	}
+	var ports []uint16
+	for _, e := range snap[0].Timeline {
+		ports = append(ports, e.Port)
+	}
+	return ports
+}
+
+// 13. The configured limit caps the timeline, dropping the oldest entries.
 func TestManagerAppliesWindowLimit(t *testing.T) {
-	t.Skip("Not implemented")
+	m := NewManager(Config{TimelineLimit: 2})
+	for i := range 5 {
+		m.Observe(inbound("203.0.113.5", uint16(i+1), t0.Add(time.Duration(i)*time.Second)))
+	}
+
+	if got, want := timelinePorts(t, m), []uint16{4, 5}; !slices.Equal(got, want) {
+		t.Errorf("timeline ports = %v, want %v", got, want)
+	}
 }
 
+// 14. The configured window drops entries that are too old.
 func TestManagerUsesConfiguredTimelineWindow(t *testing.T) {
-	t.Skip("Not Implemented")
+	m := NewManager(Config{TimelineWindow: time.Second})
+	m.Observe(inbound("203.0.113.5", 1, t0))
+	m.Observe(inbound("203.0.113.5", 2, t0.Add(600*time.Millisecond)))
+	m.Observe(inbound("203.0.113.5", 3, t0.Add(1500*time.Millisecond)))
+
+	// Port 1 is 1500ms old by now, so only it is dropped.
+	if got, want := timelinePorts(t, m), []uint16{2, 3}; !slices.Equal(got, want) {
+		t.Errorf("timeline ports = %v, want %v", got, want)
+	}
 }
 
+// 15. Zero Config fields get their defaults.
 func TestNewManagerFillsDefaults(t *testing.T) {
-	t.Skip("Not Implemented")
+	m := NewManager(Config{})
+
+	if m.timeout != DefaultTimeout {
+		t.Errorf("timeout = %v, want %v", m.timeout, DefaultTimeout)
+	}
+	if m.maxSessions != DefaultMaxSessions {
+		t.Errorf("maxSessions = %d, want %d", m.maxSessions, DefaultMaxSessions)
+	}
+	if m.timelineWindow != DefaultWindow {
+		t.Errorf("timelineWindow = %v, want %v", m.timelineWindow, DefaultWindow)
+	}
+	if m.timelineLimit != DefaultLimit {
+		t.Errorf("timelineLimit = %d, want %d", m.timelineLimit, DefaultLimit)
+	}
 }
