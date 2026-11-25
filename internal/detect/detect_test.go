@@ -47,6 +47,10 @@ func TestPortBreadth(t *testing.T) {
 		{"entries 61s old only", portRange(now.Add(-61*time.Second), 20), 0},
 		{"entries exactly 60s old", portRange(now.Add(-60*time.Second), 20), 0},
 		{"entries 59s old", portRange(now.Add(-59*time.Second), 6), 1},
+		{"entries 1ns after now", portRange(now.Add(time.Nanosecond), 20), 0},
+		{"mix: 6 recent ports + 20 after now", append(
+			ports(now, 100, 101, 102, 103, 104, 105), portRange(now.Add(time.Second), 20)...,
+		), 1},
 		{"mix: 10 old ports (61s) + 6 recent ports", append(
 			portRange(now.Add(-61*time.Second), 10), ports(now, 100, 101, 102, 103, 104, 105)...,
 		), 1},
@@ -122,6 +126,10 @@ func TestConnectionRate(t *testing.T) {
 		{"entries 999ms old", portRange(now.Add(-999*time.Millisecond), 20), now, 10},
 		{"mix: 30 old (1.5s) + 15 recent", append(
 			portRange(now.Add(-1500*time.Millisecond), 30), portRange(now, 15)...,
+		), now, 5},
+		{"entries 1ns after now", portRange(now.Add(time.Nanosecond), 20), now, 0},
+		{"mix: 15 recent + 30 after now", append(
+			portRange(now, 15), portRange(now.Add(500*time.Millisecond), 30)...,
 		), now, 5},
 		// The genpcap scanner: one SYN every 10ms. docs/phase2.md says R2 = n - 10 at event n.
 		{"scanner at event 18", burst(t0, 18, 10*time.Millisecond), t0.Add(170 * time.Millisecond), 8},
