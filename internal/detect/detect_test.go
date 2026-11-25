@@ -141,6 +141,19 @@ func TestConnectionRate(t *testing.T) {
 	}
 }
 
+// Detail is shown to people, so the window must read as a duration, not nanoseconds.
+func TestResultDetail(t *testing.T) {
+	cfg := DefaultConfig()
+	tl := portRange(t0, 20)
+
+	if got, want := PortBreadth(tl, t0, cfg).Detail, "20 distinct ports in 1m0s"; got != want {
+		t.Errorf("PortBreadth Detail = %q, want %q", got, want)
+	}
+	if got, want := ConnectionRate(tl, t0, cfg).Detail, "20 SYNs in 1s"; got != want {
+		t.Errorf("ConnectionRate Detail = %q, want %q", got, want)
+	}
+}
+
 // ConnectionRate must use the config it is given, not the default numbers.
 func TestConnectionRateUsesConfig(t *testing.T) {
 	cfg := Config{ConnectionRateWindow: 500 * time.Millisecond, ConnectionRateBaseline: 2, ConnectionRateMax: 5}

@@ -83,6 +83,6 @@ func ConnectionRate(timeline session.Timeline, now time.Time, cfg Config) Result
 	return Result{
 		Rule:   "connection_rate",
 		Points: points,
-		Detail: fmt.Sprintf("%d SYNs in %d", count, cfg.ConnectionRateWindow),
+		Detail: fmt.Sprintf("%d SYNs in %s", count, cfg.ConnectionRateWindow),
 	}
 }
